@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import processVideoFile from './utils/frameExtractor'
 
 function App() {
@@ -34,7 +34,7 @@ function App() {
     return () => {
       workerRef.current.terminate()
     };
-  }, []);
+  }, [])
 
   const handleFileUpload = async (e) => {
     const file = e.target.files[0]
@@ -62,14 +62,18 @@ function App() {
     if (!searchQuery.trim()) return
     setStatus('Searching...')
     workerRef.current.postMessage({ type: 'SEARCH', payload: { query: searchQuery } })
-  };
+  }
 
   const handleResultClick = (timestamp) => {
     if (videoRef.current) {
       videoRef.current.currentTime = timestamp
       videoRef.current.play()
     }
-  };
+  }
+
+  const videoSrc = useMemo(() => {
+    return videoFile ? URL.createObjectURL(videoFile) : ''
+  }, [videoFile])
 
   return (
     <div style={{ maxWidth: '800px', margin: '0 auto', padding: '20px', fontFamily: 'system-ui, sans-serif' }}>
@@ -106,7 +110,7 @@ function App() {
           <div style={{ flex: 2 }}>
             <video 
               ref={videoRef} 
-              src={URL.createObjectURL(videoFile)} 
+              src={videoSrc} 
               controls 
               style={{ width: '100%', borderRadius: '8px', backgroundColor: '#000' }} 
             />
