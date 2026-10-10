@@ -1,44 +1,79 @@
-import { pipeline, env } from "@huggingface/transformers"
+import { CLIPVisionModelWithProjection, CLIPTextModelWithProjection, AutoProcessor, AutoTokenizer, RawImage, env } from "@huggingface/transformers"
 import { db } from "./db"
 
 env.allowLocalModels = false
 
-let clipPipeline = null
+let visionModel = null
+let processor = null
+let textModel = null
+let tokenizer = null
 
-async function initModel() {
+const MODEL_ID = 'Xenova/clip-vit-base-patch32'
 
-    if (!clipPipeline) {
-        self.postMessage({ type: 'STATUS', status: "loading", message: "Model Loading" })
+const offscreenCanvas = new OffscreenCanvas(224, 224)
+const ctx = offscreenCanvas.getContext('2d', { willReadFrequently: true })
 
-        clipPipeline = await pipeline('feature-extraction', 'Xenova/clip-vit-base-patch32', { device: 'webgpu' })
+async function initVisionModel() {
+    if (!visionModel) {
+        self.postMessage({ type: 'STATUS', status: "loading", message: "Loading Vision Model" })
+        
+        processor = await AutoProcessor.from_pretrained(MODEL_ID)
+        
+        try {
+            visionModel = await CLIPVisionModelWithProjection.from_pretrained(MODEL_ID, { device: 'webgpu' })
+        } catch (err) {
+            console.warn("WebGPU not supported or context lost. Falling back to WASM/CPU.", err)
+            visionModel = await CLIPVisionModelWithProjection.from_pretrained(MODEL_ID, { device: 'wasm' })
+        }
+        
+        self.postMessage({ type: 'STATUS', status: "loaded", message: "Vision Pipeline Ready" })
+        
+        initTextModel()
+    }
+}
 
-        self.postMessage({ type: 'STATUS', status: "loaded", message: "Model Loaded" })
+async function initTextModel() {
+    if (!textModel) {
+        tokenizer = await AutoTokenizer.from_pretrained(MODEL_ID)
+        try {
+            textModel = await CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { device: 'webgpu' })
+        } catch (err) {
+            textModel = await CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { device: 'wasm' })
+        }
     }
 }
 
 self.onmessage = async (e) => {
     const { type, payload } = e.data
 
-    if (type == 'INIT') {
+    if (type === 'INIT') {
         try {
-            await initModel()
+            await initVisionModel()
         } catch (err) {
-            self.postMessage({ type: 'ERROR', message: `Model loading failed: ${err.message}` })
+            self.postMessage({ type: 'ERROR', message: `Model initialization failed: ${err.message}` })
         }
     }
 
-    if (type == 'INDEX_FRAME') {
+    if (type === 'INDEX_FRAME') {
         const { videoName, timestamp, imageBitmap } = payload
 
         try {
-            if (!clipPipeline) await initModel()
+            if (!visionModel) await initVisionModel()
 
-            let output = await clipPipeline(imageBitmap)
+            ctx.drawImage(imageBitmap, 0, 0, 224, 224)
+            const imageData = ctx.getImageData(0, 0, 224, 224)
+            const rawImage = new RawImage(imageData.data, 224, 224, 4)
 
-            let embedding = Array.from(output.data)
+            const inputs = await processor(rawImage)
+            const { image_embeds } = await visionModel(inputs)
 
-            if (typeof output.dispose === 'function') {
-                output.dispose()
+            const embedding = new Float32Array(image_embeds.data)
+
+            if (typeof image_embeds.dispose === 'function') {
+                image_embeds.dispose()
+            }
+            if (typeof inputs.dispose === 'function') {
+                inputs.dispose()
             }
 
             await db.keyframes.add({ videoName, timestamp, embedding })
@@ -52,19 +87,19 @@ self.onmessage = async (e) => {
         }
     }
 
-    if (type == 'SEARCH') {
+    if (type === 'SEARCH') {
         const { query } = payload
 
         try {
+            if (!textModel) await initTextModel()
 
-            if (!clipPipeline) await initModel()
+            const textInputs = tokenizer(query, { padding: true, truncation: true })
+            const { text_embeds } = await textModel(textInputs)
 
-            const textOutput = await clipPipeline(query)
+            const queryVector = new Float32Array(text_embeds.data)
 
-            const queryVector = Array.from(textOutput.data)
-
-            if (typeof textOutput.dispose === 'function') {
-                textOutput.dispose()
+            if (typeof text_embeds.dispose === 'function') {
+                text_embeds.dispose()
             }
 
             const frames = await db.keyframes.toArray()
@@ -82,8 +117,8 @@ self.onmessage = async (e) => {
                     score
                 };
             })
-                .sort((a, b) => b.score - a.score)
-                .slice(0, 5)
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 5)
 
             self.postMessage({ type: 'SEARCH_RESULTS', results })
         } catch (err) {
