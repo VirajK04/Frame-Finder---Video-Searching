@@ -125,6 +125,15 @@ self.onmessage = async (e) => {
             self.postMessage({ type: 'ERROR', message: `Search failed: ${err.message}` })
         }
     }
+
+    if (type === 'CLEAR_DB') {
+        try {
+            await db.keyframes.clear()
+            self.postMessage({ type: 'STATUS', message: 'Database cleared for new video.' })
+        } catch (err) {
+            self.postMessage({ type: 'ERROR', message: `Failed to clear DB: ${err.message}` })
+    }
+}
 }
 
 function cosineSimilarity(a, b) {
