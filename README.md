@@ -17,6 +17,7 @@ The app utilizes WebGPU and CLIP (via ONNX Runtime Web) to extract and index vid
 
 See [Architecture.md](./Architecture.md) for a detailed breakdown of system design decisions, memory management (VRAM), and the production requirements for scaling (e.g., WebCodecs demuxing and WASM HNSW indexing).
 
+
 ## Quick Start (Run Locally)
 
 Prerequisites: Node.js and a modern browser with WebGPU enabled (Chrome 113+, Edge, or Safari 18+).
